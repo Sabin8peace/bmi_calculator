@@ -18,7 +18,7 @@ def bmi_category(bmi):
             return "Invalid value"
 
 
-btn = st.button("Calc")
+btn = st.button("Calculate")
 
 if btn:
     weight_val = float(weight)

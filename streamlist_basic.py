@@ -1,3 +1,4 @@
+from PIL import ptl
 import streamlit as st
 
 st.title("Hello Streamlit 👋")
@@ -37,6 +38,3 @@ st.number_input("enter name", min_value=0, max_value=10)
 st.text_area("enter name", placeholder="dfas")
 number = st.slider("Pick a number", 1, 100, 60)
 st.write("You picked:", number)
-
-from PIL import ptl
-
