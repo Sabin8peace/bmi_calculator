@@ -1,0 +1,134 @@
+import requests
+import json
+from groq import Groq
+from dotenv import load_dotenv
+import os
+from pinecone import Pinecone
+import streamlit as st
+from create_vectors import embed_text, vector_index
+
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+groq_client = Groq(api_key=GROQ_API_KEY)
+
+
+def get_weather(lat, lon):
+    try:
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            f"&current_weather=true"
+            f"&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,windspeed_10m,rain"
+        )
+        response = requests.get(url)
+        data = response.json()
+        current_weather = data.get("current_weather", {})
+        hourly_data = data.get("hourly", {})
+        if not current_weather:
+            return json.dumps({"error": "Weather data not available! something went wrong."})
+
+        result = {
+            "current_weather": current_weather,
+            "next_5_hours": [
+                {
+                    "time": hourly_data["time"][i],
+                    "temperature_2m": hourly_data["temperature_2m"][i],
+                    "apparent_temperature": hourly_data["apparent_temperature"][i],
+                    "relative_humidity_2m": hourly_data["relative_humidity_2m"][i],
+                    "windspeed_10m": hourly_data["windspeed_10m"][i],
+                    "rain": hourly_data["rain"][i],
+                }
+                for i in range(1, 6)
+            ]
+        }
+        return json.dumps(result, indent=4)
+    except Exception as e:
+        return json.dumps({"error": f"Error fetching weather data: {str(e)}"})
+
+
+def get_weather_tool_properties():
+    # this function will return the properties of the get_weather function and assits llm to use that function
+    return {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Fetches weather information based on latitude and longitude and provides current weather and next 5 hours forecast of provided city lat and lon",
+            "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "lat": {
+                            "type": "number",
+                            "description": "Latitude of the location."
+                        },
+                        "lon": {
+                            "type": "number",
+                            "description": "Longitude of the location."
+                        }
+                    },
+                "required": ["lat", "lon"]
+            }
+        }
+    }
+
+
+def run_agent(user_prompt):
+    system_prompt = {
+        "role": "system",
+        "content": """You are a helpful assistant that helps to answer questions about weather. using the get_weather tool. If the user asks a question that is not related to weather, answer based on your general knowledge."""
+    }
+
+    user_prompt = {
+        "role": "user",
+        "content": user_prompt
+    }
+
+    tools = [get_weather_tool_properties()]
+
+    available_functions = {
+        "get_weather": get_weather
+    }
+
+    messages = [system_prompt, user_prompt]
+
+    llm_response = groq_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=messages,
+        tools=tools,
+        max_tokens=1024,
+        temperature=0.2,
+        tool_choice="auto"
+    )
+    llm_answer = llm_response.choices[0].message
+    tool_calls = llm_answer.tool_calls
+    if tool_calls:
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+            print(
+                f"Calling function: {function_name} with arguments: {function_args}")
+            tool_response = available_functions[function_name](**function_args)
+
+            messages.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": function_name,
+                "content": tool_response
+            })
+
+            llm_response = groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=messages,
+                max_tokens=1024,
+                temperature=0.2,
+            )
+            llm_answer = llm_response.choices[0].message.content
+    else:
+        llm_answer = llm_answer.content
+
+    return llm_answer
+
+
+if __name__ == "__main__":
+    user_prompt = "i am from banepa, is there chance to rain today ?"
+    answer = run_agent(user_prompt)
+    print("final answer: ", answer)
